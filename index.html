@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mars Colony: Red Planet Architect — NASA Space Apps</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Space Grotesk', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            mars: {
+              950: '#0C0605',
+              900: '#160B08',
+              800: '#23120E',
+              700: '#381D17',
+              accent: '#FF5722'
+            },
+            hud: {
+              cyan: '#00F0FF',
+              emerald: '#00E676',
+              amber: '#FFB300',
+              red: '#FF1744'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #0C0605;
+      color: #F1F5F9;
+      font-family: 'Space Grotesk', sans-serif;
+      overflow-x: hidden;
+    }
+    .mars-panel {
+      position: relative;
+      background: rgba(23, 12, 9, 0.92);
+      backdrop-filter: blur(12px);
+      border: 1px solid #381D17;
+    }
+    .mars-panel::before {
+      content: '';
+      position: absolute;
+      top: -1px; left: -1px;
+      width: 12px; height: 12px;
+      border-top: 2px solid #FF5722;
+      border-left: 2px solid #FF5722;
+      pointer-events: none;
+    }
+    .mars-panel::after {
+      content: '';
+      position: absolute;
+      bottom: -1px; right: -1px;
+      width: 12px; height: 12px;
+      border-bottom: 2px solid #FF5722;
+      border-right: 2px solid #FF5722;
+      pointer-events: none;
+    }
+    .scanlines {
+      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+      background-size: 100% 4px;
+    }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0C0605; }
+    ::-webkit-scrollbar-thumb { background: #381D17; border-radius: 9999px; }
+  </style>
+</head>
+<body class="bg-[#0C0605] text-slate-100 antialiased selection:bg-[#FF5722]/30 selection:text-[#FF5722]">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    // Web Audio Sound Generator
+    class SoundFX {
+      constructor() { this.ctx = null; this.muted = false; }
+      init() {
+        if (!this.ctx && typeof window !== 'undefined') {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (AC) this.ctx = new AC();
+        }
+        if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+      }
+      playClick(freq = 520) {
+        if (this.muted) return;
+        try {
+          this.init();
+          if (!this.ctx) return;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(freq * 1.4, this.ctx.currentTime + 0.05);
+          gain.gain.setValueAtTime(0.05, this.ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.055);
+          osc.connect(gain); gain.connect(this.ctx.destination);
+          osc.start(); osc.stop(this.ctx.currentTime + 0.06);
+        } catch(e){}
+      }
+      playBuild() {
+        if (this.muted) return;
+        try {
+          this.init();
+          if (!this.ctx) return;
+          [330, 440, 660].forEach((f, idx) => {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'sine';
+            const st = this.ctx.currentTime + idx * 0.07;
+            osc.frequency.setValueAtTime(f, st);
+            gain.gain.setValueAtTime(0.06, st);
+            gain.gain.exponentialRampToValueAtTime(0.001, st + 0.15);
+            osc.connect(gain); gain.connect(this.ctx.destination);
+            osc.start(st); osc.stop(st + 0.16);
+          });
+        } catch(e){}
+      }
+    }
+    const sfx = new SoundFX();
+
+    // Levels / Regions on Mars
+    const LEVELS = [
+      {
+        id: 'jezero',
+        name: 'Равнина Езеро (Кратер)',
+        defaultDifficulty: 'Кадет',
+        targetSols: 15,
+        baseMinerals: 350,
+        desc: 'Древнее озеро с осадочными породами. Идеальное место для бурения льда и поиска микробной жизни.',
+        hazards: 'Умеренные пылевые бури'
+      },
+      {
+        id: 'valles',
+        name: 'Долины Маринера',
+        defaultDifficulty: 'Инженер NASA',
+        targetSols: 25,
+        baseMinerals: 260,
+        desc: 'Грандиозная система каньонов. Высокая концентрация минералов, но частые перепады температур.',
+        hazards: 'Оползни и низкие ночные температуры'
+      },
+      {
+        id: 'arcadia',
+        name: 'Равнины Аркадия',
+        defaultDifficulty: 'Инженер NASA',
+        targetSols: 35,
+        baseMinerals: 220,
+        desc: 'Обширные равнины с залежами подземного льда, но постоянные солнечные затмения и метеоритные угрозы.',
+        hazards: 'Солнечные затмения (-50% энергии)'
+      },
+      {
+        id: 'utopia',
+        name: 'Равнины Утопия',
+        defaultDifficulty: 'Командир',
+        targetSols: 45,
+        baseMinerals: 190,
+        desc: 'Крупнейший известный ударный бассейн Марса. Суровый климат и высокая плотность атмосферной пыли.',
+        hazards: 'Частые пылевые бури'
+      },
+      {
+        id: 'olympus',
+        name: 'Олимп (У подножия вулкана)',
+        defaultDifficulty: 'Командир',
+        targetSols: 60,
+        baseMinerals: 150,
+        desc: 'Самый высокий вулкан Солнечной системы. Экстремальная радиация, разреженная атмосфера и дефицит минералов.',
+        hazards: 'Максимальная радиация и бури'
+      }
+    ];
+
+    const DIFFICULTY_SETTINGS = {
+      cadet: { name: 'Кадет', mineralBonus: 1.3, consumptionMultiplier: 0.8, eventChance: 0.2, desc: '+30% ресурсов, слабые бури' },
+      engineer: { name: 'Инженер NASA', mineralBonus: 1.0, consumptionMultiplier: 1.0, eventChance: 0.35, desc: 'Стандартный баланс NASA' },
+      commander: { name: 'Командир', mineralBonus: 0.75, consumptionMultiplier: 1.3, eventChance: 0.5, desc: 'Хардкор: -25% ресурсов, частые кризисы' }
+    };
+
+    const BUILDINGS = [
+      { id: 'solar', name: 'Массив фотопанелей', icon: '☀️', cost: { minerals: 40 }, prod: { energy: 25 }, desc: 'Вырабатывает энергию за счет марсианского солнца.' },
+      { id: 'moxie', name: 'Установка MOXIE', icon: '🌬️', cost: { minerals: 60 }, prod: { oxygen: 12, energy: -8 }, desc: 'Превращает марсианский CO₂ в чистый кислород.' },
+      { id: 'hydroponics', name: 'Биокупол гидропоники', icon: '🌱', cost: { minerals: 80 }, prod: { food: 15, oxygen: 5, water: -10, energy: -12 }, desc: 'Выращивает пищу и выделяет кислород, потребляя воду и энергию.' },
+      { id: 'extractor', name: 'Буровая подледного льда', icon: '⛏️', cost: { minerals: 70 }, prod: { water: 25, energy: -15 }, desc: 'Добывает подземный лед для колонии.' },
+      { id: 'habitat', name: 'Жилой модуль экипажа', icon: '🏠', cost: { minerals: 100 }, prod: { crewCap: 4, energy: -10 }, desc: 'Увеличивает вместимость колонии на 4 специалиста.' },
+      { id: 'shield', name: 'Магнитный купол защиты', icon: '🛡️', cost: { minerals: 120 }, prod: { radiationDefense: 25, energy: -30 }, desc: 'Защищает колонистов от космической радиации.' }
+    ];
+
+    function App() {
+      const [screen, setScreen] = useState('menu'); // menu, game, victory, gameover
+      const [selectedLevel, setSelectedLevel] = useState(LEVELS[0]);
+      const [selectedDiff, setSelectedDiff] = useState('engineer');
+      
+      const [sol, setSol] = useState(1);
+      const [resources, setResources] = useState({
+        minerals: 300,
+        energy: 50,
+        oxygen: 90,
+        water: 150,
+        food: 120,
+        crew: 6,
+        crewCap: 8,
+        radiation: 8.0
+      });
+      const [buildings, setBuildings] = useState([
+        { id: 'solar', count: 2 },
+        { id: 'moxie', count: 1 },
+        { id: 'hydroponics', count: 1 },
+        { id: 'extractor', count: 1 },
+        { id: 'habitat', count: 2 }
+      ]);
+      const [logs, setLogs] = useState([]);
+      const [event, setEvent] = useState(null);
+      const [gameOverReason, setGameOverReason] = useState('');
+      const [muted, setMuted] = useState(false);
+
+      const toggleMute = () => { sfx.muted = !muted; setMuted(!muted); };
+
+      const startGame = (lvl) => {
+        sfx.playClick(600);
+        setSelectedLevel(lvl);
+        const diffConfig = DIFFICULTY_SETTINGS[selectedDiff];
+        const startingMinerals = Math.round(lvl.baseMinerals * diffConfig.mineralBonus);
+
+        setSol(1);
+        setResources({
+          minerals: startingMinerals,
+          energy: 60,
+          oxygen: 100,
+          water: 160,
+          food: 130,
+          crew: 6,
+          crewCap: 8,
+          radiation: 6.0
+        });
+        setBuildings([
+          { id: 'solar', count: 2 },
+          { id: 'moxie', count: 1 },
+          { id: 'hydroponics', count: 1 },
+          { id: 'extractor', count: 1 },
+          { id: 'habitat', count: 2 }
+        ]);
+        setLogs([
+          { sol: 1, text: `Посадка в регионе ${lvl.name} (сложность: ${diffConfig.name}) завершена. Миссия началась!` }
+        ]);
+        setEvent(null);
+        setScreen('game');
+      };
+
+      const totalProd = useMemo(() => {
+        let e = 0, o = 0, f = 0, w = 0, cap = 0, radDef = 0;
+        buildings.forEach((b) => {
+          const def = BUILDINGS.find((x) => x.id === b.id);
+          if (!def) return;
+          e += (def.prod.energy || 0) * b.count;
+          o += (def.prod.oxygen || 0) * b.count;
+          f += (def.prod.food || 0) * b.count;
+          w += (def.prod.water || 0) * b.count;
+          cap += (def.prod.crewCap || 0) * b.count;
+          radDef += (def.prod.radiationDefense || 0) * b.count;
+        });
+
+        const diffConfig = DIFFICULTY_SETTINGS[selectedDiff] || DIFFICULTY_SETTINGS.engineer;
+        const crewConsO2 = resources.crew * 1.1 * diffConfig.consumptionMultiplier;
+        const crewConsFood = resources.crew * 1.0 * diffConfig.consumptionMultiplier;
+        const crewConsWater = resources.crew * 1.8 * diffConfig.consumptionMultiplier;
+
+        return {
+          energy: e,
+          oxygen: Number((o - crewConsO2).toFixed(1)),
+          food: Number((f - crewConsFood).toFixed(1)),
+          water: Number((w - crewConsWater).toFixed(1)),
+          crewCap: cap,
+          radDef
+        };
+      }, [buildings, resources.crew, selectedDiff]);
+
+      const handleBuild = (bId) => {
+        const def = BUILDINGS.find((x) => x.id === bId);
+        if (!def || resources.minerals < def.cost.minerals) return;
+        sfx.playBuild();
+        setResources((prev) => ({ ...prev, minerals: prev.minerals - def.cost.minerals }));
+        setBuildings((prev) => {
+          const idx = prev.findIndex((x) => x.id === bId);
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = { ...next[idx], count: next[idx].count + 1 };
+            return next;
+          }
+          return [...prev, { id: bId, count: 1 }];
+        });
+        setLogs((prev) => [{ sol, text: `Построен модуль: ${def.name}` }, ...prev.slice(0, 19)]);
+      };
+
+      const handleNextSol = () => {
+        sfx.playClick(650);
+        const nextSol = sol + 1;
+
+        if (nextSol > selectedLevel.targetSols) {
+          setScreen('victory');
+          return;
+        }
+
+        setResources((prev) => {
+          const newEnergy = Math.max(0, prev.energy + totalProd.energy);
+          const newO2 = Math.max(0, Math.min(400, prev.oxygen + totalProd.oxygen));
+          const newWater = Math.max(0, Math.min(1000, prev.water + totalProd.water));
+          const newFood = Math.max(0, Math.min(800, prev.food + totalProd.food));
+          const newMinerals = prev.minerals + 40;
+
+          if (newO2 <= 0) {
+            setGameOverReason('Кислород полностью исчерпан! Колония задохнулась.');
+            setScreen('gameover');
+          } else if (newWater <= 0) {
+            setGameOverReason('Запасы воды исчерпаны! Колонисты обезвожены.');
+            setScreen('gameover');
+          } else if (newFood <= 0) {
+            setGameOverReason('Продовольственный кризис! Колония голодает.');
+            setScreen('gameover');
+          }
+
+          return {
+            ...prev,
+            energy: newEnergy,
+            oxygen: newO2,
+            water: newWater,
+            food: newFood,
+            minerals: newMinerals
+          };
+        });
+
+        setSol(nextSol);
+
+        // Random event chance scaled by difficulty
+        const diffConfig = DIFFICULTY_SETTINGS[selectedDiff] || DIFFICULTY_SETTINGS.engineer;
+        if (Math.random() < diffConfig.eventChance) {
+          const eventsList = [
+            {
+              title: 'Марсианская пылевая буря',
+              desc: 'Пылевые облака снижают КПД солнечных батарей на 1 сол.',
+              effect: () => setResources(r => ({ ...r, energy: Math.max(0, r.energy - 30) }))
+            },
+            {
+              title: 'Обнаружен резерв водяного льда',
+              desc: 'Экспедиция на ровере нашла подземный ледник: +60 воды.',
+              effect: () => setResources(r => ({ ...r, water: r.water + 60 }))
+            },
+            {
+              title: 'Прибытие новой смены',
+              desc: 'Космический аппарат доставил специалистов (+2 колониста).',
+              effect: () => setResources(r => ({ ...r, crew: Math.min(r.crewCap, r.crew + 2) }))
+            }
+          ];
+          const ev = eventsList[Math.floor(Math.random() * eventsList.length)];
+          setEvent(ev);
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-[#0C0605] text-slate-100 flex flex-col justify-between p-4 md:p-8">
+          <div className="fixed inset-0 scanlines pointer-events-none opacity-25 z-30" />
+
+          {/* MAIN MENU */}
+          {screen === 'menu' && (
+            <div className="max-w-4xl w-full mx-auto my-auto flex flex-col items-center justify-center py-12 z-10">
+              <div className="text-center mb-8">
+                <div className="inline-block px-4 py-1.5 rounded-full bg-[#FF5722]/15 border border-[#FF5722] text-[#FF5722] font-mono text-xs uppercase tracking-widest mb-3">
+                  NASA Space Apps Challenge Simulator
+                </div>
+                <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight text-white mb-3">
+                  MARS COLONY <span className="text-[#FF5722]">ARCHITECT</span>
+                </h1>
+                <p className="text-slate-400 max-w-lg mx-auto text-sm md:text-base">
+                  Управляйте внеземной марсианской станцией, выбирайте уровень сложности и регион колонизации.
+                </p>
+              </div>
+
+              {/* DIFFICULTY SELECTOR */}
+              <div className="w-full max-w-2xl mb-6">
+                <h2 className="text-xs font-mono uppercase tracking-widest text-[#FF5722] font-bold mb-3 text-center">Выбери уровень сложности миссии</h2>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {Object.entries(DIFFICULTY_SETTINGS).map(([key, diff]) => (
+                    <button
+                      key={key}
+                      onClick={() => { sfx.playClick(450); setSelectedDiff(key); }}
+                      className={`p-3.5 rounded-xl border text-left transition ${selectedDiff === key ? 'border-[#FF5722] bg-[#FF5722]/15 text-white' : 'border-[#381D17] bg-[#160B08] text-slate-400 hover:text-white'}`}
+                    >
+                      <div className="font-bold text-sm mb-1 text-white">{diff.name}</div>
+                      <div className="text-[11px] leading-snug">{diff.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="w-full max-w-2xl space-y-4 mb-8">
+                <h2 className="text-xs font-mono uppercase tracking-widest text-[#FF5722] font-bold text-center">Выбери регион миссии</h2>
+                <div className="grid grid-cols-1 gap-4">
+                  {LEVELS.map((lvl) => (
+                    <div
+                      key={lvl.id}
+                      onClick={() => startGame(lvl)}
+                      className="mars-panel rounded-2xl p-5 cursor-pointer transition hover:border-[#FF5722] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[#160B08]"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="font-bold text-lg text-white">{lvl.name}</h3>
+                          <span className="text-xs font-mono px-2 py-0.5 rounded bg-[#23120E] text-[#FF5722]">{lvl.targetSols} солов</span>
+                        </div>
+                        <p className="text-xs text-slate-300 mb-2">{lvl.desc}</p>
+                        <div className="flex gap-4 text-xs font-mono text-slate-400">
+                          <span>⚠️ Риск: {lvl.hazards}</span>
+                        </div>
+                      </div>
+                      <button className="px-5 py-2.5 rounded-xl bg-[#FF5722] text-white font-extrabold text-xs uppercase tracking-wider shrink-0 hover:bg-[#F4511E] transition">
+                        Начать миссию
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <button onClick={toggleMute} className="px-4 py-2 rounded-xl bg-[#160B08] border border-[#381D17] text-xs font-semibold">
+                  {muted ? '🔇 Звук выкл' : '🔊 Звук вкл'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* GAMEPLAY SCREEN */}
+          {screen === 'game' && (
+            <>
+              <header className="max-w-6xl w-full mx-auto flex flex-wrap items-center justify-between gap-4 border-b border-[#381D17] pb-4 z-10">
+                <div className="flex items-center gap-3">
+                  <button onClick={() => setScreen('menu')} className="px-3 py-1.5 rounded-xl bg-[#160B08] border border-[#381D17] text-xs font-mono text-slate-300 hover:text-white">
+                    ← Меню
+                  </button>
+                  <div>
+                    <h1 className="text-lg md:text-xl font-extrabold text-white">{selectedLevel.name}</h1>
+                    <p className="text-xs font-mono text-[#FF5722] uppercase tracking-widest">Сол {sol} / {selectedLevel.targetSols}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button onClick={toggleMute} className="px-3 py-2 rounded-xl bg-[#23120E] border border-[#381D17] text-xs font-semibold">{muted ? '🔇 Звук выкл' : '🔊 Звук вкл'}</button>
+                </div>
+              </header>
+
+              <main className="max-w-6xl w-full mx-auto my-6 grid grid-cols-1 lg:grid-cols-12 gap-6 z-10 flex-1">
+                <div className="lg:col-span-8 space-y-6">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="mars-panel rounded-xl p-3">
+                      <div className="text-xs text-slate-400 font-mono mb-1">⚡ Энергия</div>
+                      <div className="text-lg font-extrabold text-[#00F0FF]">{resources.energy} <span className="text-xs font-normal text-slate-400">({totalProd.energy >= 0 ? `+${totalProd.energy}` : totalProd.energy})</span></div>
+                    </div>
+                    <div className="mars-panel rounded-xl p-3">
+                      <div className="text-xs text-slate-400 font-mono mb-1">🌬️ Кислород</div>
+                      <div className="text-lg font-extrabold text-[#00E676]">{resources.oxygen.toFixed(0)} <span className="text-xs font-normal text-slate-400">({totalProd.oxygen >= 0 ? `+${totalProd.oxygen}` : totalProd.oxygen})</span></div>
+                    </div>
+                    <div className="mars-panel rounded-xl p-3">
+                      <div className="text-xs text-slate-400 font-mono mb-1">💧 Вода</div>
+                      <div className="text-lg font-extrabold text-sky-400">{resources.water.toFixed(0)} <span className="text-xs font-normal text-slate-400">({totalProd.water >= 0 ? `+${totalProd.water}` : totalProd.water})</span></div>
+                    </div>
+                    <div className="mars-panel rounded-xl p-3">
+                      <div className="text-xs text-slate-400 font-mono mb-1">⛏️ Минералы</div>
+                      <div className="text-lg font-extrabold text-amber-400">{resources.minerals}</div>
+                    </div>
+                  </div>
+
+                  <div className="mars-panel rounded-2xl p-5">
+                    <h2 className="text-sm font-mono uppercase tracking-wider text-[#FF5722] font-bold mb-4">🏗️ Строительство модулей</h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {BUILDINGS.map((b) => {
+                        const count = buildings.find(x => x.id === b.id)?.count || 0;
+                        const canAfford = resources.minerals >= b.cost.minerals;
+                        return (
+                          <div key={b.id} className="bg-[#160B08] border border-[#381D17] rounded-xl p-3.5 flex flex-col justify-between">
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="font-bold text-sm text-white">{b.icon} {b.name}</span>
+                                <span className="text-xs font-mono px-2 py-0.5 rounded bg-[#23120E] text-[#FF5722]">Шт: {count}</span>
+                              </div>
+                              <p className="text-xs text-slate-300 leading-snug mb-3">{b.desc}</p>
+                            </div>
+                            <div className="flex items-center justify-between pt-2 border-t border-[#381D17]">
+                              <span className="text-xs font-mono text-amber-400">Цена: {b.cost.minerals} мин.</span>
+                              <button
+                                disabled={!canAfford}
+                                onClick={() => handleBuild(b.id)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${canAfford ? 'bg-[#FF5722] text-white hover:bg-[#F4511E]' : 'bg-[#23120E] text-slate-500 cursor-not-allowed'}`}
+                              >
+                                Построить
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-4 mars-panel rounded-2xl p-5 flex flex-col justify-between space-y-4">
+                  <div>
+                    <h2 className="text-sm font-mono uppercase tracking-wider text-[#FF5722] font-bold mb-3">📡 Статус колонии</h2>
+                    <div className="space-y-2.5 text-xs bg-[#160B08] p-3 rounded-xl border border-[#381D17]">
+                      <div className="flex justify-between"><span>Колонисты:</span><strong className="text-white">{resources.crew} / {totalProd.crewCap || resources.crewCap} чел.</strong></div>
+                      <div className="flex justify-between"><span>Защита от рад.:</span><strong className="text-purple-400">{totalProd.radDef} мЗв</strong></div>
+                      <div className="flex justify-between"><span>Еда в складе:</span><strong className="text-emerald-400">{resources.food.toFixed(0)} кг</strong></div>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 flex flex-col min-h-[165px]">
+                    <h3 className="text-xs font-mono uppercase tracking-wider text-slate-400 mb-2">📜 Бортовой журнал</h3>
+                    <div className="flex-1 bg-[#160B08] border border-[#381D17] rounded-xl p-3 overflow-y-auto max-h-[220px] space-y-2">
+                      {logs.map((l, i) => (
+                        <div key={i} className="text-xs border-b border-[#23120E] pb-2 last:border-b-0">
+                          <span className="font-mono text-[#FF5722]">SOL {String(l.sol).padStart(2, '0')}:</span> <span className="text-slate-300">{l.text}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleNextSol}
+                    className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-[#FF5722] to-[#F4511E] text-white font-extrabold text-sm uppercase shadow-[0_0_25px_rgba(255,87,34,0.4)] transition hover:brightness-110"
+                  >
+                    ЗАВЕРШИТЬ СОЛ {sol} →
+                  </button>
+                </div>
+              </main>
+            </>
+          )}
+
+          {/* VICTORY SCREEN */}
+          {screen === 'victory' && (
+            <div className="max-w-md w-full mx-auto my-auto mars-panel border-[#00E676] rounded-2xl p-6 text-center z-50">
+              <span className="text-xs font-mono text-[#00E676] uppercase font-bold">🏆 Миссия успешно выполнена</span>
+              <h3 className="text-2xl font-bold text-white mt-2 mb-3">Колония выстояла!</h3>
+              <p className="text-sm text-slate-300 mb-6">Вы успешно провели поселение через {selectedLevel.targetSols} солов в регионе {selectedLevel.name}. Человечество гордится вами!</p>
+              <button
+                onClick={() => setScreen('menu')}
+                className="w-full py-3 rounded-xl bg-[#FF5722] text-white font-bold text-xs uppercase"
+              >
+                Вернуться в меню
+              </button>
+            </div>
+          )}
+
+          {/* GAME OVER SCREEN */}
+          {screen === 'gameover' && (
+            <div className="max-w-md w-full mx-auto my-auto mars-panel border-[#FF1744] rounded-2xl p-6 text-center z-50">
+              <span className="text-xs font-mono text-[#FF1744] uppercase font-bold">💥 Критический сбой миссии</span>
+              <h3 className="text-2xl font-bold text-white mt-2 mb-3">Колония погибла на Соле {sol}</h3>
+              <p className="text-sm text-slate-300 mb-6">{gameOverReason}</p>
+              <button
+                onClick={() => setScreen('menu')}
+                className="w-full py-3 rounded-xl bg-[#FF5722] text-white font-bold text-xs uppercase"
+              >
+                Вернуться в меню
+              </button>
+            </div>
+          )}
+
+          {/* EVENT MODAL */}
+          {event && (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
+              <div className="max-w-md w-full mars-panel border-[#FF5722] rounded-2xl p-6">
+                <span className="text-xs font-mono text-[#FF5722] uppercase font-bold">⚠️ Внештатное событие</span>
+                <h3 className="text-lg font-bold text-white mt-1 mb-2">{event.title}</h3>
+                <p className="text-sm text-slate-300 leading-relaxed mb-6">{event.desc}</p>
+                <button
+                  onClick={() => { sfx.playClick(); event.effect(); setEvent(null); }}
+                  className="w-full py-2.5 rounded-xl bg-[#FF5722] text-white font-bold text-xs uppercase"
+                >
+                  Принять и продолжить
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
